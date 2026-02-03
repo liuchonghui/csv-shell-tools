@@ -20,7 +20,7 @@ A lightweight Bash script that converts standard CSV files into well-formatted, 
 ## 🚀 Installation
 1. Download the script:
    ```bash
-   curl -O https://raw.githubusercontent.com/your-username/your-repo/main/csv2md
+   curl -O https://github.com/liuchonghui/csv-shell-tools/raw/refs/heads/main/csv2md/csv2md
    ```
 2. Make the script executable:
    ```bash

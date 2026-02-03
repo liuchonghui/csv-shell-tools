@@ -22,7 +22,7 @@ A lightweight and efficient Bash script to reverse the data rows of CSV files wh
 ## 🚀 Installation
 1. Download the script:
    ```bash
-   curl -O https://raw.githubusercontent.com/your-username/your-repo/main/csvr
+   curl -O https://github.com/liuchonghui/csv-shell-tools/raw/refs/heads/main/csvr/csvr
    ```
 2. Make the script executable:
    ```bash

@@ -21,7 +21,7 @@ A powerful Bash script for filtering rows in CSV files based on specified column
 ## 🚀 Installation
 1. Download the script:
    ```bash
-   curl -O https://raw.githubusercontent.com/your-username/your-repo/main/csvfilter
+   curl -O https://github.com/liuchonghui/csv-shell-tools/raw/refs/heads/main/csvfilter/csvfilter
    ```
 2. Make the script executable:
    ```bash

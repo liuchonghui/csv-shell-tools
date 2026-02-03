@@ -19,7 +19,7 @@ A lightweight and robust Shell script tool designed to calculate cumulative sums
 ## 🚀 Installation
 1. Download the script:
    ```bash
-   curl -O https://raw.githubusercontent.com/your-username/your-repo/main/csvsum
+   curl -O https://github.com/liuchonghui/csv-shell-tools/raw/refs/heads/main/csvsum/csvsum
    ```
 2. Make the script executable:
    ```bash

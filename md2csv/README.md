@@ -21,7 +21,7 @@ A lightweight Bash script that converts standard Markdown tables into well-forma
 ## 🚀 Installation
 1. Download the script:
    ```bash
-   curl -O https://raw.githubusercontent.com/your-username/your-repo/main/md2csv
+   curl -O https://github.com/liuchonghui/csv-shell-tools/raw/refs/heads/main/md2csv/md2csv
    ```
 2. Make the script executable:
    ```bash
