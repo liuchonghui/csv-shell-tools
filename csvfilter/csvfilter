@@ -1,0 +1,283 @@
+#!/bin/bash
+
+# 脚本名称: csvfilter
+# 功能: 根据指定列、运算符和值筛选CSV文件行（保留首行表头），输出为 原文件名.csvfilter.csv
+# 使用方式: ./csvfilter --col=列号 --filter=运算符 --value=匹配值 目标CSV文件路径
+# 支持的运算符:
+#   EQ   - 等于（Equal）
+#   NEQ  - 不等于（Not Equal）
+#   FD   - 包含（Find，忽略大小写）
+#   NFD  - 不包含（Not Find，忽略大小写）
+#   GT   - 大于（Greater Than，数值比较）
+#   GTE  - 大于等于（Greater Than or Equal，数值比较）
+#   LT   - 小于（Less Than，数值比较）
+#   LTE  - 小于等于（Less Than or Equal，数值比较）
+# 注意:
+#   - 数值匹配直接写 --value=1000（不加引号）
+#   - 字符串匹配写 --value="abc" 或 --value="right now"（必须加双引号，支持空格）
+# 示例:
+#   ./csvfilter --col=3 --filter=FD --value="jenkins ci" data.csv
+#   ./csvfilter --col=5 --filter=GT --value=1000 sales.csv
+
+# 定义错误退出函数
+error_exit() {
+    echo "错误: $1" >&2
+    exit 1
+}
+
+# 显示帮助信息
+show_help() {
+    cat << EOF
+用法: ./csvfilter --col=列号 --filter=运算符 --value=匹配值 目标CSV文件路径
+
+功能: 根据指定列、运算符和值筛选CSV文件行，保留首行表头，输出为 原文件名.csvfilter.csv
+
+必选参数:
+  --col=列号        指定要筛选的列（正整数，如 --col=3 表示第3列）
+  --filter=运算符   筛选运算符，支持以下类型：
+                    EQ   - 等于（Equal）
+                    NEQ  - 不等于（Not Equal）
+                    FD   - 包含（Find，忽略大小写）
+                    NFD  - 不包含（Not Find，忽略大小写）
+                    GT   - 大于（Greater Than，仅数值）
+                    GTE  - 大于等于（Greater Than or Equal，仅数值）
+                    LT   - 小于（Less Than，仅数值）
+                    LTE  - 小于等于（Less Than or Equal，仅数值）
+  --value=匹配值    筛选的匹配值：
+                    - 数值：直接写 --value=1000（不加引号）
+                    - 字符串：必须加双引号 --value="abc" 或 --value="right now"（支持空格）
+  目标CSV文件路径   要处理的CSV文件（最后一个参数）
+
+示例:
+  1. 筛选第2列包含"jenkins ci"的行（忽略大小写）
+     ./csvfilter --col=2 --filter=FD --value="jenkins ci" ./data.csv
+
+  2. 筛选第5列大于1000的行
+     ./csvfilter --col=5 --filter=GT --value=1000 ./sales.csv
+
+  3. 筛选第4列等于"right now"的行
+     ./csvfilter --col=4 --filter=EQ --value="right now" ./log.csv
+
+  4. 筛选第3列小于等于500的行
+     ./csvfilter --col=3 --filter=LTE --value=500 ./score.csv
+EOF
+    exit 0
+}
+
+# 初始化参数变量
+COL_NUM=""
+FILTER_OP=""
+MATCH_VALUE=""
+TARGET_FILE=""
+PARAM_STATE=""  # 用于处理带空格的value参数
+
+# 解析输入参数（支持带空格的--value）
+for arg in "$@"; do
+    # 如果处于接收value的状态（处理带空格的value）
+    if [ "$PARAM_STATE" = "WAIT_VALUE" ]; then
+        MATCH_VALUE="$MATCH_VALUE $arg"
+        # 检查是否以双引号结尾，结束value接收
+        if [[ "$arg" =~ "\"$" ]]; then
+            PARAM_STATE=""
+        fi
+        continue
+    fi
+
+    case "$arg" in
+        --help|-h)
+            show_help
+            ;;
+        --col=*)
+            COL_NUM="${arg#*=}"
+            ;;
+        --filter=*)
+            FILTER_OP="${arg#*=}"
+            ;;
+        --value=*)
+            # 提取--value=后的内容
+            VALUE_PART="${arg#*=}"
+            MATCH_VALUE="$VALUE_PART"
+            # 如果以双引号开头但不以双引号结尾，说明value包含空格，需要继续接收后续参数
+            if [[ "$VALUE_PART" =~ ^\" && ! "$VALUE_PART" =~ "\"$" ]]; then
+                PARAM_STATE="WAIT_VALUE"
+            fi
+            ;;
+        *)
+            # 非参数键值对的最后一个参数视为目标文件路径
+            if [ -z "$TARGET_FILE" ] && [ "$PARAM_STATE" != "WAIT_VALUE" ]; then
+                TARGET_FILE="$arg"
+            else
+                error_exit "无效的参数: $arg！使用 --help 查看正确用法。"
+            fi
+            ;;
+    esac
+done
+
+# 清理MATCH_VALUE：去除首尾的双引号，处理空格转义
+# 比如 "--value="right now"" 变成 "right now"，"--value=1000" 保持 1000
+if [[ "$MATCH_VALUE" =~ ^\" ]]; then
+    MATCH_VALUE="${MATCH_VALUE#\"}"  # 去除开头的双引号
+    MATCH_VALUE="${MATCH_VALUE%\"}"  # 去除结尾的双引号
+    MATCH_VALUE="${MATCH_VALUE// / }" # 保留空格
+fi
+
+# 1. 校验核心筛选参数是否完整
+if [ -z "$COL_NUM" ] || [ -z "$FILTER_OP" ] || [ -z "$MATCH_VALUE" ]; then
+    error_exit "缺少必要的筛选参数！必须同时指定 --col、--filter、--value 三个参数。使用 --help 查看用法。"
+fi
+
+# 2. 校验--filter参数的合法性
+VALID_OPS=("EQ" "NEQ" "FD" "NFD" "GT" "GTE" "LT" "LTE")
+if ! [[ " ${VALID_OPS[@]} " =~ " $FILTER_OP " ]]; then
+    error_exit "无效的--filter运算符！支持的运算符：${VALID_OPS[*]}。使用 --help 查看详细说明。"
+fi
+
+# 3. 校验数值运算符的value是否为数字
+if [[ "$FILTER_OP" =~ ^(GT|GTE|LT|LTE)$ ]]; then
+    if ! [[ "$MATCH_VALUE" =~ ^[+-]?[0-9]+(\.[0-9]+)?$ ]]; then
+        error_exit "--filter为$FILTER_OP（数值比较）时，--value必须是数字！当前值: $MATCH_VALUE"
+    fi
+fi
+
+# 4. 校验--col参数是否为正整数
+if ! [[ "$COL_NUM" =~ ^[1-9][0-9]*$ ]]; then
+    error_exit "--col参数必须是正整数（表示列号），当前值: $COL_NUM"
+fi
+
+# 5. 校验目标文件参数
+if [ -z "$TARGET_FILE" ]; then
+    error_exit "未指定目标CSV文件路径！请将文件路径作为最后一个参数传入。"
+fi
+
+# 6. 检查目标文件是否存在
+if [ ! -f "$TARGET_FILE" ]; then
+    error_exit "指定的文件 '$TARGET_FILE' 不存在！"
+fi
+
+# 7. 检查文件是否为CSV类型（后缀校验）
+if [[ "$TARGET_FILE" != *.csv ]]; then
+    error_exit "指定的文件 '$TARGET_FILE' 不是CSV文件（后缀不是.csv）！"
+fi
+
+# 8. 提取文件名和路径，构建输出文件名
+DIR_NAME=$(dirname "$TARGET_FILE")
+BASE_NAME=$(basename "$TARGET_FILE" .csv)
+OUTPUT_FILE="$DIR_NAME/$BASE_NAME.csvfilter.csv"
+
+# 9. 核心过滤逻辑：保留首行表头，仅筛选数据行
+# 修复点：
+# 1. 将参数名 substr 改为 find_str（避免和awk内置函数substr冲突）
+# 2. 优化tolower的使用方式，兼容老版本awk
+awk -v col="$COL_NUM" -v op="$FILTER_OP" -v val="$MATCH_VALUE" -F ',' '
+    # 去除字段首尾的引号（兼容带引号的CSV字段）
+    function clean_field(str) {
+        gsub(/^"/, "", str)
+        gsub(/"$/, "", str)
+        return str
+    }
+
+    # 不区分大小写的包含判断（模拟SEARCH功能）
+    # 修复：参数名 substr → find_str，避免和内置函数冲突
+    function contains_ignore_case(str, find_str) {
+        # 兼容老版本awk：先判断参数非空，再转换大小写
+        if (length(str) == 0 || length(find_str) == 0) {
+            return 0
+        }
+        # 转换为小写后判断是否包含
+        lower_str = tolower(str)
+        lower_find = tolower(find_str)
+        return index(lower_str, lower_find) > 0
+    }
+
+    {
+        # 首行（表头）直接输出，不参与筛选
+        if (NR == 1) {
+            print $0
+        } 
+        # 从第二行开始执行筛选逻辑
+        else {
+            # 获取指定列的值并清理引号
+            target_col = clean_field($col)
+            match_flag = 0  # 默认不匹配
+
+            # 根据运算符执行筛选逻辑
+            if (op == "EQ") {
+                # 等于：严格匹配（支持带空格的字符串/数值）
+                if (target_col == val) {
+                    match_flag = 1
+                }
+            } else if (op == "NEQ") {
+                # 不等于：严格不匹配（支持带空格的字符串/数值）
+                if (target_col != val) {
+                    match_flag = 1
+                }
+            } else if (op == "FD") {
+                # 包含：忽略大小写（支持带空格的子串）
+                if (contains_ignore_case(target_col, val)) {
+                    match_flag = 1
+                }
+            } else if (op == "NFD") {
+                # 不包含：忽略大小写（支持带空格的子串）
+                if (!contains_ignore_case(target_col, val)) {
+                    match_flag = 1
+                }
+            } else if (op == "GT") {
+                # 大于：数值比较（转换为数值类型）
+                if (target_col + 0 > val + 0) {
+                    match_flag = 1
+                }
+            } else if (op == "GTE") {
+                # 大于等于：数值比较
+                if (target_col + 0 >= val + 0) {
+                    match_flag = 1
+                }
+            } else if (op == "LT") {
+                # 小于：数值比较
+                if (target_col + 0 < val + 0) {
+                    match_flag = 1
+                }
+            } else if (op == "LTE") {
+                # 小于等于：数值比较
+                if (target_col + 0 <= val + 0) {
+                    match_flag = 1
+                }
+            }
+
+            # 如果匹配则输出行并计数
+            if (match_flag == 1) {
+                print $0
+                count++
+            }
+        }
+    }
+
+    # 处理完成后输出匹配的行数
+    END {
+        print (count == "" ? 0 : count) > "/tmp/csvfilter_count.tmp"
+    }
+' "$TARGET_FILE" > "$OUTPUT_FILE" || error_exit "处理文件 '$TARGET_FILE' 时出错！"
+
+# 10. 读取匹配的行数并输出结果信息
+MATCH_COUNT=$(cat /tmp/csvfilter_count.tmp 2>/dev/null || echo 0)
+rm -f /tmp/csvfilter_count.tmp  # 清理临时文件
+
+# 构建友好的运算符说明
+case "$FILTER_OP" in
+    EQ) OP_DESC="等于" ;;
+    NEQ) OP_DESC="不等于" ;;
+    FD) OP_DESC="包含（忽略大小写）" ;;
+    NFD) OP_DESC="不包含（忽略大小写）" ;;
+    GT) OP_DESC="大于" ;;
+    GTE) OP_DESC="大于等于" ;;
+    LT) OP_DESC="小于" ;;
+    LTE) OP_DESC="小于等于" ;;
+esac
+
+# 输出执行结果信息（对带空格的value做友好显示）
+echo "处理完成！"
+echo "源文件: $TARGET_FILE"
+echo "输出文件: $OUTPUT_FILE"
+echo "条件匹配数据${MATCH_COUNT}行"
+echo "筛选条件: 第$COL_NUM列 $OP_DESC '$MATCH_VALUE'"
+
+exit 0

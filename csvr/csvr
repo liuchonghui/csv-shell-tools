@@ -1,0 +1,90 @@
+#!/bin/bash
+##############################################################################
+# 脚本名称：csvr
+# 脚本功能：
+#   1. 接收一个CSV文件路径作为必传参数（相对/绝对路径均可）；
+#   2. 校验目标文件为CSV文件（后缀为.csv）且文件存在；
+#   3. 生成输出文件：原文件名.r.csv（如temp.csv → temp.r.csv）；
+#   4. 输出规则：
+#      - 保留CSV首行表头，写入输出文件第一行；
+#      - 将原文件第二行至最后一行的数据行整体翻转（第二行变最后一行，最后一行变第二行）；
+#      - 翻转后的数据行写入输出文件的第二行及以后；
+# 适用场景：批量反转CSV数据行（表头保持不变）
+# 使用方法：
+#   ./csvr <target_csv_file>
+# 示例：
+#   ./csvr temp.csv  # 输出文件为 temp.r.csv
+##############################################################################
+
+# 显示帮助信息
+show_help() {
+    grep '^# ' "$0" | sed 's/^# //' | grep -v '^#$'
+    exit 0
+}
+
+# 校验参数数量（必须传入1个参数：CSV文件路径）
+if [ $# -eq 0 ]; then
+    echo "Error: Missing required parameter - CSV file path."
+    echo "Usage: $0 <target_csv_file>"
+    echo "Use '$0 -h' to see full help."
+    exit 1
+fi
+
+# 处理-h/--help参数
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    show_help
+fi
+
+# 定义输入文件路径（最后一个参数，兼容后续扩展参数）
+INPUT_FILE="${@: -1}"
+
+# 校验1：文件是否存在且为普通文件
+if [ ! -f "$INPUT_FILE" ]; then
+    echo "Error: File '$INPUT_FILE' does not exist or is not a regular file."
+    exit 1
+fi
+
+# 校验2：文件是否为CSV文件（后缀为.csv，不区分大小写）
+if [[ ! "$INPUT_FILE" =~ \.csv$ ]]; then
+    echo "Error: File '$INPUT_FILE' is not a CSV file (must end with .csv)."
+    exit 1
+fi
+
+# 生成输出文件名（原路径/原文件名.r.csv）
+INPUT_DIR=$(dirname "$INPUT_FILE")
+INPUT_FILENAME=$(basename "$INPUT_FILE")
+# 去除原文件的.csv后缀，拼接.r.csv（如temp.csv → temp.r.csv）
+OUTPUT_FILENAME="${INPUT_FILENAME%.csv}.r.csv"
+OUTPUT_FILE="${INPUT_DIR}/${OUTPUT_FILENAME}"
+
+# 检查临时文件创建权限（避免内存溢出，适配大批量数据）
+TMP_HEADER=$(mktemp /tmp/csvr_header.XXXXXX)
+TMP_DATA=$(mktemp /tmp/csvr_data.XXXXXX)
+if [ ! -w "$TMP_HEADER" ] || [ ! -w "$TMP_DATA" ]; then
+    echo "Error: Failed to create temporary files (permission denied)."
+    exit 1
+fi
+
+# 步骤1：提取首行表头到临时文件
+head -n 1 "$INPUT_FILE" > "$TMP_HEADER"
+
+# 步骤2：提取第二行及以后的数据行，翻转后写入临时文件
+# tac命令：反向输出文件内容（正好实现行翻转）
+tail -n +2 "$INPUT_FILE" | tac > "$TMP_DATA"
+
+# 步骤3：合并表头和翻转后的数据行到输出文件
+cat "$TMP_HEADER" "$TMP_DATA" > "$OUTPUT_FILE"
+
+# 先计算统计信息（删除临时文件前完成）
+TOTAL_ROWS=$(wc -l < "$INPUT_FILE")
+DATA_ROWS=$((TOTAL_ROWS - 1))
+REVERSED_TOTAL_ROWS=$(wc -l < "$OUTPUT_FILE")
+
+# 清理临时文件（避免/tmp目录堆积）
+rm -f "$TMP_HEADER" "$TMP_DATA"
+
+# 仅输出精简的统计信息（无表情符号、无多余提示）
+echo "Total rows in input:    $TOTAL_ROWS (header: 1, data: $DATA_ROWS)"
+echo "Total rows in output:   $REVERSED_TOTAL_ROWS (header: 1, reversed data: $DATA_ROWS)"
+
+exit 0

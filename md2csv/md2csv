@@ -1,0 +1,133 @@
+#!/bin/bash
+##############################################################################
+# 脚本名称：md2csv
+# 脚本功能：
+#   1. 将标准Markdown表格转换为结构化的CSV文件；
+#   2. 保留Markdown表格首行表头作为CSV标题行；
+#   3. 自动适配Markdown表格列数，兼容不同对齐格式的分隔线（|---|:-:|--|）；
+#   4. 兼容带空格/特殊字符的表格字段，适配绝对/相对路径输入。
+# 使用方法：
+#   ./md2csv <目标Markdown文件路径>
+#   示例：
+#     ./md2csv test.md          # 相对路径
+#     ./md2csv /tmp/data.md     # 绝对路径
+# 输出说明：
+#   - 输出文件与输入Markdown同目录，命名规则：原文件名 + .csv（如test.md → test.csv）；
+#   - 输出文件为标准CSV格式，保留Markdown表格所有行/列信息。
+##############################################################################
+
+# 全局变量配置
+TMP_FILE=$(mktemp /tmp/md2csv.XXXXXX)
+
+# 检查必要参数是否传入
+if [ $# -eq 0 ]; then
+    echo "Error: Missing required parameter. Usage: $0 <target_md_file>"
+    exit 1
+fi
+
+# 提取最后一个参数作为目标Markdown文件路径
+INPUT_FILE="${@: -1}"
+
+# 检查目标文件是否存在且为普通文件
+if [ ! -f "$INPUT_FILE" ]; then
+    echo "Error: Target Markdown file $INPUT_FILE does not exist or is not a regular file."
+    exit 1
+fi
+
+# 检查临时文件创建状态
+if [ ! -w "$TMP_FILE" ]; then
+    echo "Error: Failed to create temporary file."
+    exit 1
+fi
+
+# 第一步：处理Markdown文件，转换为CSV格式
+awk '
+    # 标记是否已找到表头（分隔线出现后，前一行是表头）
+    BEGIN { 
+        found_separator = 0
+        header_line = ""
+        data_start = 0
+    }
+
+    # 跳过空行
+    NF == 0 { next }
+
+    # 先保存原始行，用于判断是否是分隔线
+    {
+        original_line = $0
+        # 处理当前行：移除首尾的|和空格
+        current_line = $0
+        gsub(/^[[:space:]]*\|?[[:space:]]*|[[:space:]]*\|?[[:space:]]*$/, "", current_line)
+
+        # 1. 判断是否是分隔线行（原始行包含---，且以|开头/结尾）
+        if (original_line ~ /\|[[:space:]]*[-:]+[[:space:]]*\|/ && current_line ~ /[-:|]/) {
+            found_separator = 1
+            # 如果有保存的表头行，先写入表头
+            if (header_line != "") {
+                print header_line > "'"$TMP_FILE"'"
+                header_line = ""
+            }
+            data_start = 1  # 分隔线后开始处理数据行
+            next
+        }
+
+        # 2. 分隔线前的行：如果是表格行（包含|），保存为表头
+        if (found_separator == 0 && original_line ~ /\|/ && current_line != "") {
+            # 处理表头为CSV格式
+            csv_header = ""
+            num_fields = split(current_line, fields, /[[:space:]]*\|[[:space:]]*/)
+            for (i=1; i<=num_fields; i++) {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", fields[i])
+                if (csv_header == "") {
+                    csv_header = fields[i]
+                } else {
+                    csv_header = csv_header "," fields[i]
+                }
+            }
+            header_line = csv_header
+            next
+        }
+
+        # 3. 分隔线后的行：处理为数据行
+        if (data_start == 1 && original_line ~ /\|/) {
+            csv_row = ""
+            num_fields = split(current_line, fields, /[[:space:]]*\|[[:space:]]*/)
+            for (i=1; i<=num_fields; i++) {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", fields[i])
+                if (csv_row == "") {
+                    csv_row = fields[i]
+                } else {
+                    csv_row = csv_row "," fields[i]
+                }
+            }
+            print csv_row > "'"$TMP_FILE"'"
+        }
+    }
+' "$INPUT_FILE"
+
+# 检查转换结果是否为空
+if [ ! -s "$TMP_FILE" ]; then
+    echo "Warning: No valid Markdown table content converted from $INPUT_FILE."
+    rm -f "$TMP_FILE"
+    exit 0
+fi
+
+# 第二步：构造输出文件名（原文件名 + .csv）
+INPUT_DIR=$(dirname "$INPUT_FILE")
+INPUT_FILENAME=$(basename "$INPUT_FILE")
+# 移除原MD后缀（如test.md → test），避免出现test.md.csv
+BASE_NAME="${INPUT_FILENAME%.md}"
+OUTPUT_FILE="${INPUT_DIR}/${BASE_NAME}.csv"
+
+# 第三步：将临时文件内容写入最终输出文件
+cp "$TMP_FILE" "$OUTPUT_FILE"
+
+# 清理临时文件
+rm -f "$TMP_FILE"
+
+# 输出完成信息
+TOTAL_ROWS=$(wc -l < "$OUTPUT_FILE")
+# CSV行数 = 表头1行 + 数据行N行
+DATA_ROWS=$(( TOTAL_ROWS - 1 ))
+echo "Completed. Total data rows in CSV file: $DATA_ROWS"
+echo "Result file: $(realpath "$OUTPUT_FILE")"
